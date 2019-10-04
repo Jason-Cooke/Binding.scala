@@ -36,8 +36,9 @@ import scala.annotation.meta.companionMethod
 import scala.annotation.tailrec
 import scala.language.implicitConversions
 import scala.language.higherKinds
-import scala.collection.GenSeq
+import scala.collection.{GenSeq, SeqView, mutable}
 import scala.collection.mutable.Buffer
+import scala.collection.TraversableView
 import scalaz.{Monad, MonadPlus}
 
 import scala.language.experimental.macros
@@ -327,7 +328,7 @@ object Binding extends MonadicFactory.WithTypeClass[Monad, Binding] {
       * @note This method must not be invoked inside a `@dom` method body or a `Binding { ... }` block.
       */
     def value_=(newValue: A): Unit = {
-      if (cache != newValue) {
+      if (cache.isInstanceOf[Mutable] || cache.isInstanceOf[TraversableView[_, _]] ||cache != newValue) {
         cache = newValue
         val event = new ChangedEvent(this, newValue)
         for (listener <- publisher) {
@@ -392,7 +393,7 @@ object Binding extends MonadicFactory.WithTypeClass[Monad, Binding] {
       val oldCache = cache
       val newCache = f(upstreamEvent.newValue)
       cache = newCache
-      if (oldCache != newCache) {
+      if (oldCache.isInstanceOf[Mutable] || oldCache.isInstanceOf[TraversableView[_, _]] ||oldCache != newCache) {
         val event = new ChangedEvent(Map.this, newCache)
         for (listener <- publisher) {
           listener.changed(event)
@@ -426,7 +427,7 @@ object Binding extends MonadicFactory.WithTypeClass[Monad, Binding] {
         val newCache = f(upstreamEvent.newValue)
         cache = newCache
         newCache.addChangedListener(FlatMap.this)
-        if (oldCache.value != newCache.value) {
+        if (oldCache.isInstanceOf[Mutable] || oldCache.isInstanceOf[TraversableView[_, _]] ||oldCache.value != newCache.value) {
           val event = new ChangedEvent(FlatMap.this, newCache.value)
           for (listener <- publisher) {
             listener.changed(event)
@@ -628,7 +629,9 @@ object Binding extends MonadicFactory.WithTypeClass[Monad, Binding] {
     override protected def value = Nil
   }
 
-  private[Binding] abstract class ValueProxy[B] extends Seq[B] with HasCache[Binding[B]] {
+  private[Binding] abstract class ValueProxy[B] extends SeqView[B, HasCache[Binding[B]]#Cache] with HasCache[Binding[B]] {
+    protected def underlying = cacheData
+
     @inline
     override def length: Int = {
       cacheData.length
@@ -652,7 +655,7 @@ object Binding extends MonadicFactory.WithTypeClass[Monad, Binding] {
     */
   object BindingSeq {
 
-    private[binding] final class FlatProxy[B](underlying: Seq[BindingSeq[B]]) extends Seq[B] {
+    private[binding] final class FlatProxy[B](protected val underlying: Seq[BindingSeq[B]]) extends SeqView[B, Seq[BindingSeq[B]]] {
 
       @inline
       override def length: Int = {
